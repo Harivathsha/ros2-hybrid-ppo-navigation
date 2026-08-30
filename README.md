@@ -9,12 +9,6 @@ randomized obstacles in a three-room simulated environment.
 > reached an 83.33% success rate on 30 unseen deterministic Level-2 episodes.
 > It is not yet collision-free or ready for deployment on a real robot.
 
-## Demonstration
-
-- [Early training: exploration and frequent failures](docs/media/01_early_training.mp4)
-- [Middle training: partial obstacle avoidance](docs/media/02_middle_training.mp4)
-- [Final policy: route-guided cross-room navigation](docs/media/03_final_policy.mp4)
-
 | Three-room Gazebo world |
 
 <img width="1858" height="1166" alt="Screenshot from 2026-08-30 16-03-20" src="https://github.com/user-attachments/assets/9ed3f852-95d3-4154-851f-a08fc6f9517a" />
@@ -211,6 +205,20 @@ python3 -m nav_learning.train_ppo \
   --run-dir runs/ppo_navigation/continued_training \
   --total-timesteps 600000
 ```
+
+## Demonstration
+| Early training: exploration and frequent failures |
+
+
+https://github.com/user-attachments/assets/eeb4a253-2dc6-4ee6-91d1-bf7f2406c03e
+
+| Middle training: partial obstacle avoidance |
+
+[Screencast from 2026-08-30 15-39-03.webm](https://github.com/user-attachments/assets/647a3924-3d7f-45c1-8341-98082b1f7184)
+
+| Final policy: route-guided cross-room navigation |
+
+[Screencast from 2026-08-30 16-01-12.webm](https://github.com/user-attachments/assets/77a0a80a-439d-4118-b0a6-fdd64c90c874)
 
 ## Known limitations
 
