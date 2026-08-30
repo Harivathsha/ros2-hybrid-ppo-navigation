@@ -15,11 +15,13 @@ randomized obstacles in a three-room simulated environment.
 - [Middle training: partial obstacle avoidance](docs/media/02_middle_training.mp4)
 - [Final policy: route-guided cross-room navigation](docs/media/03_final_policy.mp4)
 
-| Three-room Gazebo world | Final policy reaching the goal |
-|---|---|
-| ![Three-room Gazebo environment](<img width="1858" height="1166" alt="world_overview" src="https://github.com/user-attachments/assets/42495476-8408-4516-b956-3ffcf621381b" />) | ![Final PPO navigation policy](docs/images/final_policy.png) |
+| Three-room Gazebo world |
 
+<img width="1858" height="1166" alt="world_overview" src="https://github.com/user-attachments/assets/38c7eb75-5440-40f1-8ae2-0605e91bac88" />
 
+| Final policy reaching the goal |
+
+<img width="1858" height="1166" alt="final_policy" src="https://github.com/user-attachments/assets/07b99939-f751-4b88-be9d-d344835f3945" />
 
 
 ## Final held-out evaluation
