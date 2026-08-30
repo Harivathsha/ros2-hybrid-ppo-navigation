@@ -17,7 +17,10 @@ randomized obstacles in a three-room simulated environment.
 
 | Three-room Gazebo world | Final policy reaching the goal |
 |---|---|
-| ![Three-room Gazebo environment](docs/images/world_overview.png) | ![Final PPO navigation policy](docs/images/final_policy.png) |
+| ![Three-room Gazebo environment](<img width="1858" height="1166" alt="world_overview" src="https://github.com/user-attachments/assets/42495476-8408-4516-b956-3ffcf621381b" />) | ![Final PPO navigation policy](docs/images/final_policy.png) |
+
+
+
 
 ## Final held-out evaluation
 
