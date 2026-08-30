@@ -1,0 +1,6 @@
+# Keep the existing CUDA-enabled PyTorch installation; do not reinstall it
+# from this file. These are the additional lightweight RL tooling dependencies.
+numpy>=1.26
+PyYAML>=6.0
+matplotlib>=3.8
+pytest>=7.0

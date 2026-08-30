@@ -1,0 +1,40 @@
+{
+  "checkpoint": "/home/harivathsha/ai_envs/project/autonomous_bot/runs/ppo_navigation/run_20260829_route_fix_seed7/checkpoints/snapshot_route_fix_260k.pt",
+  "checkpoint_training_state": {
+    "total_timesteps": 263443,
+    "update_index": 125
+  },
+  "created_at_utc": "2026-08-29T20:14:29.812587+00:00",
+  "deterministic": true,
+  "episodes_per_level": 30,
+  "levels": [
+    2
+  ],
+  "overall": {
+    "collision_rate": 0.16666666666666666,
+    "episodes": 30,
+    "mean_final_distance_m": 0.9790627869805478,
+    "mean_length": 282.2,
+    "mean_minimum_clearance_m": 0.43531163533528644,
+    "mean_return": 57.28088404647331,
+    "mean_stuck_step_fraction": 0.0,
+    "mean_success_path_efficiency": 0.8819982568416042,
+    "success_rate": 0.8333333333333334,
+    "timeout_rate": 0.0
+  },
+  "per_level": {
+    "2": {
+      "collision_rate": 0.16666666666666666,
+      "episodes": 30,
+      "mean_final_distance_m": 0.9790627869805478,
+      "mean_length": 282.2,
+      "mean_minimum_clearance_m": 0.43531163533528644,
+      "mean_return": 57.28088404647331,
+      "mean_stuck_step_fraction": 0.0,
+      "mean_success_path_efficiency": 0.8819982568416042,
+      "success_rate": 0.8333333333333334,
+      "timeout_rate": 0.0
+    }
+  },
+  "seed_base": 70000
+}

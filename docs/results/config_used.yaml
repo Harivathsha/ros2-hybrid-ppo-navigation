@@ -1,0 +1,34 @@
+# Complete standalone PPO training configuration.
+# RosNavEnv already owns observations, rewards, resets, and episode limits.
+
+total_timesteps: 600000
+rollout_steps: 2048
+seed: 7
+reset_seed_base: 10000
+device: auto
+output_root: runs/ppo_navigation
+checkpoint_every_updates: 10
+log_every_updates: 1
+anneal_learning_rate: true
+
+curriculum:
+  enabled: true
+  start_level: 0
+  max_level: 2
+  promotion_window: 50
+  minimum_episodes: 50
+  success_threshold: 0.70
+
+ppo:
+  learning_rate: 0.0003
+  discount_factor: 0.99
+  gae_lambda: 0.95
+  clip_coefficient: 0.20
+  value_clip_coefficient: 0.20
+  entropy_coefficient: 0.01
+  value_loss_coefficient: 0.50
+  max_gradient_norm: 0.50
+  update_epochs: 10
+  minibatch_size: 64
+  target_kl: 0.03
+  adam_epsilon: 0.00001

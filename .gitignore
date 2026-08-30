@@ -1,0 +1,39 @@
+# ROS / colcon outputs
+build/
+install/
+log/
+
+# Training scratch data (selected evidence is copied to docs/)
+runs/
+working_backups/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editors and OS files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Local archives and patch leftovers
+*.zip
+*.bak
+*.orig
+*.rej
+
+# Checkpoints are ignored except for the deliberately selected portfolio model
+*.pt
+!models/
+!models/*.pt
+
+# Screen-recording source files; only the compressed demo is committed
+*.mkv
+*.webm
+docs/media/recording_source.*

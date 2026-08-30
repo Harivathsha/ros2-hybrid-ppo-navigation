@@ -1,0 +1,9 @@
+Complete PPO core smoke test passed.
+trainable_parameters=72773
+sample_log_probability_reevaluation=True
+terminated_bootstrap_masked=True
+truncated_bootstrap_preserved=True
+gae_hand_calculation_match=True
+ppo_gradient_update=True
+policy_loss=-0.000251
+value_loss=3.857519

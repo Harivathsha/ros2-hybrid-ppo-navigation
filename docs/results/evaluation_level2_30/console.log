@@ -1,0 +1,35 @@
+[INFO] [1788033336.131145393] [ros_nav_env]: Navigation environment startup check passed: set-pose service, LiDAR, and odometry are ready.
+Checkpoint: /home/harivathsha/ai_envs/project/autonomous_bot/runs/ppo_navigation/run_20260829_route_fix_seed7/checkpoints/snapshot_route_fix_260k.pt
+Evaluation device: cuda
+Evaluation output: /home/harivathsha/ai_envs/project/autonomous_bot/runs/ppo_navigation/run_20260829_route_fix_seed7/evaluation_260k_full
+level=2 episode=1/30 seed=90000 outcome=success return=55.722 steps=251 clearance=0.432 route=2/2
+level=2 episode=2/30 seed=90001 outcome=success return=62.852 steps=303 clearance=0.666 route=2/2
+level=2 episode=3/30 seed=90002 outcome=collision return=-3.474 steps=153 clearance=0.206 route=2/2
+level=2 episode=4/30 seed=90003 outcome=success return=44.348 steps=142 clearance=0.937 route=2/2
+level=2 episode=5/30 seed=90004 outcome=success return=84.238 steps=395 clearance=0.531 route=4/4
+level=2 episode=6/30 seed=90005 outcome=success return=62.259 steps=315 clearance=0.226 route=2/2
+level=2 episode=7/30 seed=90006 outcome=success return=86.932 steps=440 clearance=0.590 route=4/4
+level=2 episode=8/30 seed=90007 outcome=success return=57.735 steps=220 clearance=0.647 route=2/2
+level=2 episode=9/30 seed=90008 outcome=success return=78.606 steps=357 clearance=0.356 route=4/4
+level=2 episode=10/30 seed=90009 outcome=collision return=-22.525 steps=31 clearance=0.213 route=0/2
+level=2 episode=11/30 seed=90010 outcome=success return=54.187 steps=201 clearance=0.565 route=2/2
+level=2 episode=12/30 seed=90011 outcome=success return=76.441 steps=331 clearance=0.507 route=2/2
+level=2 episode=13/30 seed=90012 outcome=success return=84.595 steps=407 clearance=0.338 route=4/4
+level=2 episode=14/30 seed=90013 outcome=success return=49.287 steps=165 clearance=0.314 route=2/2
+level=2 episode=15/30 seed=90014 outcome=success return=51.090 steps=153 clearance=0.717 route=2/2
+level=2 episode=16/30 seed=90015 outcome=success return=59.813 steps=248 clearance=0.363 route=2/2
+level=2 episode=17/30 seed=90016 outcome=success return=79.234 steps=329 clearance=0.507 route=4/4
+level=2 episode=18/30 seed=90017 outcome=success return=58.988 steps=291 clearance=0.271 route=2/2
+level=2 episode=19/30 seed=90018 outcome=success return=84.668 steps=374 clearance=0.428 route=4/4
+level=2 episode=20/30 seed=90019 outcome=success return=92.482 steps=490 clearance=0.315 route=4/4
+level=2 episode=21/30 seed=90020 outcome=success return=70.296 steps=314 clearance=0.442 route=2/2
+level=2 episode=22/30 seed=90021 outcome=success return=59.930 steps=244 clearance=0.418 route=2/2
+level=2 episode=23/30 seed=90022 outcome=collision return=28.987 steps=386 clearance=0.214 route=4/4
+level=2 episode=24/30 seed=90023 outcome=success return=62.508 steps=271 clearance=0.325 route=2/2
+level=2 episode=25/30 seed=90024 outcome=success return=87.692 steps=409 clearance=0.414 route=4/4
+level=2 episode=26/30 seed=90025 outcome=success return=57.030 steps=211 clearance=0.903 route=2/2
+level=2 episode=27/30 seed=90026 outcome=success return=85.630 steps=384 clearance=0.547 route=4/4
+level=2 episode=28/30 seed=90027 outcome=success return=57.148 steps=241 clearance=0.252 route=2/2
+level=2 episode=29/30 seed=90028 outcome=collision return=-18.210 steps=62 clearance=0.210 route=0/4
+level=2 episode=30/30 seed=90029 outcome=collision return=29.938 steps=348 clearance=0.204 route=4/4
+Evaluation summary: /home/harivathsha/ai_envs/project/autonomous_bot/runs/ppo_navigation/run_20260829_route_fix_seed7/evaluation_260k_full/evaluation_summary.json
