@@ -17,7 +17,7 @@ randomized obstacles in a three-room simulated environment.
 
 | Three-room Gazebo world |
 
-<img width="1858" height="1166" alt="world_overview" src="https://github.com/user-attachments/assets/38c7eb75-5440-40f1-8ae2-0605e91bac88" />
+<img width="1858" height="1166" alt="Screenshot from 2026-08-30 16-03-20" src="https://github.com/user-attachments/assets/9ed3f852-95d3-4154-851f-a08fc6f9517a" />
 
 | Final policy reaching the goal |
 
