@@ -1,5 +1,3 @@
-# Current square-arena profile. Fresh training starts new weights; resume restores a checkpoint.
-# The recorded experiment changed profiles during training; see README_CURRICULUM.md.
 total_timesteps: 700000
 rollout_steps: 2048
 seed: 42

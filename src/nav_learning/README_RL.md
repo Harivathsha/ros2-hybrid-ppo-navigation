@@ -3,7 +3,7 @@
 There are still only **six functional runtime Python files**. The empty
 `__init__.py` and `resource/nav_learning` are Python/ROS registration markers.
 Setup files describe how ROS installs the package; they are not extra robots or
-controllers. The files under `test/` are offline checks.
+controllers. The three files under `test/` are offline checks.
 
 | File | What to read first | What it does |
 | --- | --- | --- |
@@ -31,7 +31,7 @@ The policy has no recurrent memory. The final goal direction is supplied even
 behind a box. Training must teach it that the goal direction is not always the
 safe direction of immediate travel.
 
-## Detour reward design
+## Why the new detour reward helps
 
 The old progress term was `5 * (previous_goal_distance - current_goal_distance)`.
 That can give a negative immediate reward when a useful detour first moves away
@@ -80,8 +80,8 @@ lets us continue learned weights. A changed training profile clears the promotio
 score window once; a normal same-profile resume keeps it.
 
 `stage_success=0.85 wins=85/100` means 85 successes in the last 100 eligible tasks,
-not 85% of the weights learned. Rehearsal is excluded. Practice phases and full stages use
-80/100 plus 8/10 held-out validation episodes.
+not 85% of the weights learned. Rehearsal is excluded. Practice phases need
+90/100 plus 9/10 held-out validation episodes; full stages use 80/100 plus 8/10.
 Training phases are one box, two boxes, three boxes, then full 5-7-box Stage 2.
 
 Use `--task-suite corners --levels 1 --practice-phase 2` to test paired three-box
@@ -91,7 +91,3 @@ goal bearing and nearest-obstacle distance to help diagnose corner failures.
 
 Installation, exact commands and research references are in
 [README_CURRICULUM.md](../../README_CURRICULUM.md).
-
-## Current published profile
-
-The default YAML now matches the published checkpoint: seed 42, a 700,000-step target, an 80% practice gate, and braking penalty scale 1.0. The braking cost is added when forward motion closes the nearest obstacle distance inside the 0.5 m proximity region. This feedback is not a steering override or a guarantee of passage crossing.
