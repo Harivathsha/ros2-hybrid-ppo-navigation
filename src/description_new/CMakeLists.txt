@@ -43,7 +43,6 @@ install(DIRECTORY
   urdf
   meshes
   rviz
-  src
   scripts
   DESTINATION share/${PROJECT_NAME}
 )

@@ -6,12 +6,15 @@ import argparse
 import csv
 import json
 import math
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 import torch
+
+from nav_learning.nav_math import ENVIRONMENT_ID, RewardSettings, ActionSettings, ensure_checkpoint_environment
 
 from nav_learning.ppo import (
     choose_device,
@@ -20,8 +23,20 @@ from nav_learning.ppo import (
 )
 
 
+def goal_seeking_action(observation: np.ndarray) -> np.ndarray:
+    if observation.shape != (77,) or not np.isfinite(observation).all():
+        raise ValueError('Expected a finite 77-value observation.')
+    bearing = math.atan2(float(observation[73]), float(observation[74]))
+    forward_fraction = max(0.0, math.cos(bearing))
+    turn_fraction = float(np.clip(2.0 * bearing / 1.2, -1, 1))
+    return np.asarray([2.0 * forward_fraction - 1.0, turn_fraction], dtype=np.float32)
+
+
 EPISODE_FIELDS = (
+    "task_kind", "mirrored",
     "curriculum_level",
+    "practice_phase",
+    "region_size_m",
     "episode",
     "seed",
     "return",
@@ -37,16 +52,18 @@ EPISODE_FIELDS = (
     "path_efficiency",
     "mean_linear_velocity_mps",
     "mean_absolute_angular_velocity_radps",
-    "route_waypoints_completed",
-    "route_waypoint_count",
+    "straight_path_blocked",
+    "straight_path_blocker_count",
+    "randomized_object_count",
     "stuck_steps",
     "stuck_step_fraction",
-    "start_room",
-    "goal_room",
 )
 
 TRAJECTORY_FIELDS = (
+    "robot_yaw", "commanded_linear_velocity_mps", "commanded_angular_velocity_radps",
+    "nearest_obstacle_m", "relative_goal_bearing_rad",
     "curriculum_level",
+    "practice_phase",
     "episode",
     "seed",
     "step",
@@ -54,9 +71,6 @@ TRAJECTORY_FIELDS = (
     "robot_y",
     "goal_x",
     "goal_y",
-    "active_target_x",
-    "active_target_y",
-    "active_target_kind",
     "outcome",
 )
 
@@ -131,8 +145,13 @@ def _parse_arguments(args: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Evaluate a PPO checkpoint with fixed unseen seeds.",
     )
-    parser.add_argument("--checkpoint", required=True, type=str)
+    parser.add_argument("--checkpoint", type=str, default=None)
+    parser.add_argument("--baseline", choices=("goal-seeking",), default=None)
+    parser.add_argument("--practice-phase", type=int, choices=(0, 1, 2), default=None,
+                        help="Evaluate Stage 2 detour practice; requires --levels 1.")
     parser.add_argument("--output-dir", type=str, default=None)
+    parser.add_argument("--task-suite", choices=("standard", "corners"), default="standard",
+                        help="corners runs mirrored Stage 2 corner tasks; requires --levels 1.")
     parser.add_argument(
         "--levels",
         nargs="+",
@@ -158,6 +177,14 @@ def _parse_arguments(args: Sequence[str] | None) -> argparse.Namespace:
         default=3,
     )
     arguments = parser.parse_args(args)
+    if arguments.practice_phase is not None and tuple(dict.fromkeys(arguments.levels)) != (1,):
+        parser.error("--practice-phase requires --levels 1.")
+    if arguments.task_suite == "corners" and tuple(dict.fromkeys(arguments.levels)) != (1,):
+        parser.error("--task-suite corners requires --levels 1.")
+    if not arguments.checkpoint and not arguments.baseline:
+        parser.error("Provide --checkpoint or --baseline goal-seeking.")
+    if arguments.checkpoint and arguments.baseline:
+        parser.error("Choose either a PPO checkpoint or the baseline.")
     if arguments.episodes_per_level <= 0:
         parser.error("--episodes-per-level must be positive.")
     if arguments.seed_base < 0:
@@ -178,7 +205,7 @@ def _default_output_directory(checkpoint_path: Path) -> Path:
 
 
 def run_evaluation(
-    checkpoint_path: Path,
+    checkpoint_path: Path | None,
     output_directory: Path,
     levels: Sequence[int],
     episodes_per_level: int,
@@ -186,6 +213,9 @@ def run_evaluation(
     requested_device: str,
     stochastic: bool,
     trajectory_episodes_per_level: int,
+    baseline: bool = False,
+    practice_phase: int | None = None,
+    task_suite: str = "standard",
 ) -> dict[str, Any]:
     """Run policy episodes and save per-episode and trajectory data."""
 
@@ -193,19 +223,28 @@ def run_evaluation(
 
     from nav_learning.ros_nav_env import MAX_EPISODE_STEPS, RosNavEnv
 
-    device = choose_device(requested_device)
-    agent, payload = load_checkpoint(
-        checkpoint_path,
-        device=device,
-        load_optimizer=False,
+    device = choose_device('cpu' if baseline else requested_device)
+    if task_suite not in ("standard", "corners") or (task_suite == "corners" and tuple(levels) != (1,)):
+        raise ValueError("Corner evaluation requires only level 1.")
+    if practice_phase is not None and (tuple(levels) != (1,) or practice_phase not in (0, 1, 2)):
+        raise ValueError("Practice evaluation requires only level 1 and phase 0, 1 or 2.")
+    if baseline:
+        agent, payload = None, {"training_state": {}}
+    else:
+        agent, payload = load_checkpoint(checkpoint_path, device=device, load_optimizer=False)
+        ensure_checkpoint_environment(payload.get("metadata", {}))
+        agent.model.eval()
+    reward_settings = RewardSettings.from_mapping(
+        payload.get("metadata", {}).get("reward_settings", {})
     )
-    agent.model.eval()
+    action_settings = ActionSettings.from_mapping(payload.get("metadata", {}).get("action_settings", {}))
     output_directory.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(seed_base)
     np.random.seed(seed_base)
 
     episode_rows: list[dict[str, Any]] = []
     trajectory_rows: list[dict[str, Any]] = []
+    layout_rows = []
     environment = None
     rclpy.init(args=None)
 
@@ -214,14 +253,30 @@ def run_evaluation(
     print(f"Evaluation output: {output_directory}")
 
     try:
-        environment = RosNavEnv()
+        environment = RosNavEnv(reward_settings=reward_settings, action_settings=action_settings)
         for level in levels:
             for episode_index in range(episodes_per_level):
                 seed = seed_base + level * 10000 + episode_index
+                reset_options = {} if practice_phase is None else {"practice_phase": practice_phase}
+                if task_suite == "corners":
+                    reset_options.update(corner_probability=1.0, mirror_pair=True)
                 observation, reset_info = environment.reset(
                     seed=seed,
                     curriculum_level=level,
+                    **reset_options,
                 )
+                layout_rows.append({
+                    "curriculum_level": level, "episode": episode_index, "seed": seed,
+                    "practice_phase": -1 if practice_phase is None else practice_phase,
+                    "task_kind": reset_info.get("task_kind", "random"),
+                    "mirrored": reset_info.get("mirrored", False),
+                    "start": list(reset_info["requested_start"]), "goal": list(reset_info["goal"]),
+                    "straight_path_blocked": bool(reset_info["straight_path_blocked"]),
+                    "straight_path_blocker_count": int(reset_info["straight_path_blocker_count"]),
+                    "object_layout": reset_info["object_layout"],
+                    "region_center": reset_info.get("region_center", (0, 0)),
+                    "region_size_m": reset_info.get("region_size_m", 9),
+                })
                 goal_x, goal_y = (
                     float(reset_info["goal"][0]),
                     float(reset_info["goal"][1]),
@@ -235,6 +290,7 @@ def run_evaluation(
                     trajectory_rows.append(
                         {
                             "curriculum_level": level,
+                            "practice_phase": -1 if practice_phase is None else practice_phase,
                             "episode": episode_index,
                             "seed": seed,
                             "step": 0,
@@ -242,18 +298,6 @@ def run_evaluation(
                             "robot_y": previous_y,
                             "goal_x": goal_x,
                             "goal_y": goal_y,
-                            "active_target_x": reset_info.get(
-                                "active_target_x",
-                                goal_x,
-                            ),
-                            "active_target_y": reset_info.get(
-                                "active_target_y",
-                                goal_y,
-                            ),
-                            "active_target_kind": reset_info.get(
-                                "active_target_kind",
-                                "goal",
-                            ),
                             "outcome": "start",
                         }
                     )
@@ -267,25 +311,28 @@ def run_evaluation(
                 final_info: Mapping[str, Any] = reset_info
 
                 for step_index in range(MAX_EPISODE_STEPS[level] + 1):
-                    observation_tensor = observation_to_tensor(
-                        observation,
-                        device,
-                    )
-                    with torch.inference_mode():
-                        if stochastic:
-                            action, _, _ = agent.model.sample_action(
-                                observation_tensor
-                            )
-                        else:
-                            action = agent.model.deterministic_action(
-                                observation_tensor
-                            )
-                    action_array = (
-                        action.detach()
-                        .cpu()
-                        .numpy()
-                        .astype(np.float32, copy=False)
-                    )
+                    if baseline:
+                        action_array = goal_seeking_action(observation)
+                    else:
+                        observation_tensor = observation_to_tensor(
+                            observation,
+                            device,
+                        )
+                        with torch.inference_mode():
+                            if stochastic:
+                                action, _, _ = agent.model.sample_action(
+                                    observation_tensor
+                                )
+                            else:
+                                action = agent.model.deterministic_action(
+                                    observation_tensor
+                                )
+                        action_array = (
+                            action.detach()
+                            .cpu()
+                            .numpy()
+                            .astype(np.float32, copy=False)
+                        )
                     (
                         observation,
                         reward,
@@ -324,6 +371,7 @@ def run_evaluation(
                         trajectory_rows.append(
                             {
                                 "curriculum_level": level,
+                                "practice_phase": -1 if practice_phase is None else practice_phase,
                                 "episode": episode_index,
                                 "seed": seed,
                                 "step": step_index + 1,
@@ -331,19 +379,11 @@ def run_evaluation(
                                 "robot_y": current_y,
                                 "goal_x": goal_x,
                                 "goal_y": goal_y,
-                                "active_target_x": info.get(
-                                    "active_target_x",
-                                    goal_x,
-                                ),
-                                "active_target_y": info.get(
-                                    "active_target_y",
-                                    goal_y,
-                                ),
-                                "active_target_kind": info.get(
-                                    "active_target_kind",
-                                    "goal",
-                                ),
                                 "outcome": info["outcome"],
+                                **{key: info.get(key, "") for key in (
+                                    "robot_yaw", "commanded_linear_velocity_mps",
+                                    "commanded_angular_velocity_radps", "nearest_obstacle_m",
+                                    "relative_goal_bearing_rad")},
                             }
                         )
                     if terminated or truncated:
@@ -359,12 +399,16 @@ def run_evaluation(
                     reset_info["distance_to_goal_m"]
                 )
                 path_efficiency = (
-                    initial_distance / path_length
+                    max(0.0, initial_distance - float(final_info["distance_to_goal_m"])) / path_length
                     if success and path_length > 1e-9
                     else float("nan")
                 )
                 row = {
+                    "task_kind": reset_info.get("task_kind", "random"),
+                    "mirrored": int(reset_info.get("mirrored", False)),
                     "curriculum_level": level,
+                    "practice_phase": -1 if practice_phase is None else practice_phase,
+                    "region_size_m": reset_info.get("region_size_m", 9),
                     "episode": episode_index,
                     "seed": seed,
                     "return": total_reward,
@@ -386,20 +430,15 @@ def run_evaluation(
                     "mean_absolute_angular_velocity_radps": (
                         _mean_or_none(angular_velocities)
                     ),
-                    "route_waypoints_completed": int(
-                        final_info.get("route_waypoint_index", 0)
-                    ),
-                    "route_waypoint_count": int(
-                        final_info.get("route_waypoint_count", 0)
-                    ),
+                    "straight_path_blocked": int(reset_info["straight_path_blocked"]),
+                    "straight_path_blocker_count": int(reset_info["straight_path_blocker_count"]),
+                    "randomized_object_count": reset_info["randomized_object_count"],
                     "stuck_steps": stuck_steps,
                     "stuck_step_fraction": (
                         stuck_steps / int(final_info["step_count"])
                         if int(final_info["step_count"]) > 0
                         else 0.0
                     ),
-                    "start_room": reset_info.get("start_room", ""),
-                    "goal_room": reset_info.get("goal_room", ""),
                 }
                 episode_rows.append(row)
                 print(
@@ -408,8 +447,7 @@ def run_evaluation(
                     f"outcome={outcome} return={total_reward:.3f} "
                     f"steps={row['length']} "
                     f"clearance={minimum_clearance:.3f} "
-                    f"route={row['route_waypoints_completed']}/"
-                    f"{row['route_waypoint_count']}"
+                    f"direct_blockers={row['straight_path_blocker_count']}"
                 )
     finally:
         if environment is not None:
@@ -428,6 +466,10 @@ def run_evaluation(
         trajectory_rows,
     )
 
+    with (output_directory / "evaluation_layouts.json").open("w", encoding="utf-8") as stream:
+        json.dump({"environment_id": ENVIRONMENT_ID, "episodes": layout_rows}, stream, indent=2)
+        stream.write("\n")
+
     per_level = {
         str(level): _summarise_rows(
             [
@@ -439,8 +481,17 @@ def run_evaluation(
         for level in levels
     }
     summary = {
+        "environment_id": ENVIRONMENT_ID,
+        "reward_settings": asdict(reward_settings),
+        "action_settings": asdict(action_settings),
+        "task_suite": task_suite,
+        "control_mode": "gazebo_run_to_sim_time_v1",
+        "practice_phase": practice_phase,
+        "task_distribution": ("mirrored_corners" if task_suite == "corners" else
+                              "standard_benchmark" if practice_phase is None else f"detour_practice_{practice_phase}"),
+        "controller": "goal-seeking baseline" if baseline else "PPO final-goal policy",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "checkpoint": str(checkpoint_path),
+        "checkpoint": str(checkpoint_path) if checkpoint_path else None,
         "checkpoint_training_state": {
             "total_timesteps": payload["training_state"].get(
                 "total_timesteps"
@@ -455,6 +506,9 @@ def run_evaluation(
         "levels": list(levels),
         "per_level": per_level,
         "overall": _summarise_rows(episode_rows),
+        "blocked_direct_path_episodes": sum(row["straight_path_blocked"] for row in episode_rows),
+        "blocked_direct_path_success_rate": _mean_or_none(
+            row["success"] for row in episode_rows if row["straight_path_blocked"]),
     }
     summary_path = output_directory / "evaluation_summary.json"
     with summary_path.open("w", encoding="utf-8") as stream:
@@ -468,13 +522,13 @@ def main(args: Sequence[str] | None = None) -> None:
     """Resolve paths and run fixed-seed PPO evaluation."""
 
     arguments = _parse_arguments(args)
-    checkpoint_path = Path(arguments.checkpoint).expanduser().resolve()
-    if not checkpoint_path.is_file():
+    checkpoint_path = Path(arguments.checkpoint).expanduser().resolve() if arguments.checkpoint else None
+    if checkpoint_path is not None and not checkpoint_path.is_file():
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     output_directory = (
         Path(arguments.output_dir).expanduser().resolve()
         if arguments.output_dir
-        else _default_output_directory(checkpoint_path).resolve()
+        else (_default_output_directory(checkpoint_path).resolve() if checkpoint_path else Path("evaluation_baseline").resolve())
     )
     run_evaluation(
         checkpoint_path=checkpoint_path,
@@ -484,6 +538,9 @@ def main(args: Sequence[str] | None = None) -> None:
         seed_base=arguments.seed_base,
         requested_device=arguments.device,
         stochastic=arguments.stochastic,
+        baseline=bool(arguments.baseline),
+        practice_phase=arguments.practice_phase,
+        task_suite=arguments.task_suite,
         trajectory_episodes_per_level=(
             arguments.trajectory_episodes_per_level
         ),

@@ -1,248 +1,134 @@
-# Hybrid PPO Navigation for ROS 2 and Gazebo
+# PPO Robot Navigation · ROS 2 + Gazebo
 
-A continuous-control mobile robot navigation project built with ROS 2 Jazzy,
-Gazebo Harmonic, PyTorch, and a from-scratch Proximal Policy Optimisation (PPO)
-implementation. The robot uses LiDAR to reach randomized goals while avoiding
-randomized obstacles in a three-room simulated environment.
+A differential-drive robot learns to reach random goals among static obstacles using a custom PyTorch PPO implementation, ROS 2 Jazzy and Gazebo Harmonic. Training progresses through 3 m, 6 m and 9 m regions.
 
-> **Project status:** research prototype. The selected route-guided checkpoint
-> reached an 83.33% success rate on 30 unseen deterministic Level-2 episodes.
-> It is not yet collision-free or ready for deployment on a real robot.
-
-| Three-room Gazebo world |
-
-<img width="1858" height="1166" alt="Screenshot from 2026-08-30 16-03-20" src="https://github.com/user-attachments/assets/9ed3f852-95d3-4154-851f-a08fc6f9517a" />
-
-| Final policy reaching the goal |
-
-<img width="1858" height="1166" alt="final_policy" src="https://github.com/user-attachments/assets/07b99939-f751-4b88-be9d-d344835f3945" />
-
-
-## Final held-out evaluation
-
-The selected checkpoint was evaluated deterministically on 30 unseen Level-2
-seeds (`90000`–`90029`). Deterministic evaluation uses `tanh(actor_mean)` rather
-than training exploration noise.
-
-| Metric | Result |
-|---|---:|
-| Checkpoint training steps | 263,443 |
-| PPO update | 125 |
-| Successes | 25 / 30 |
-| Success rate | 83.33% |
-| Collision rate | 16.67% |
-| Timeout rate | 0% |
-| Mean episode return | 57.281 |
-| Mean episode length | 282.2 steps |
-| Mean minimum LiDAR clearance | 0.435 m |
-| Mean successful-path efficiency | 88.20% |
-| Mean stuck-step fraction | 0% |
-
-The raw CSV, trajectory CSV, summary JSON, console log, checkpoint hash, and
-test logs are included under `docs/results/` and `docs/test_evidence/`.
-
-| Training progress | Held-out evaluation |
+| Successful navigation | Timeout example |
 |---|---|
-| ![PPO training curves](docs/plots/training_curves.png) | ![Fixed-seed evaluation](docs/plots/evaluation_summary.png) |
+| ![Stage 3 successful navigation](docs/images/environment_success.png) | ![Stage 3 timeout](docs/images/environment_timeout.png) |
 
-Additional evidence: [PPO optimisation diagnostics](docs/plots/ppo_diagnostics.png)
-and [top-down evaluation trajectories](docs/plots/evaluation_trajectories.png).
+*Overhead reconstructions of recorded evaluation layouts and paths; these are not Gazebo screenshots.*
 
-## What is learned and what is planned
+## Results
 
-This is a **hybrid hierarchical navigation system**:
+Deterministic evaluation on **50 Stage 3 layouts**, with **12–15 boxes in a 9 × 9 m arena**:
 
-- A small route selector uses the known doorway locations to choose an active
-  subgoal when the final goal is in another room.
-- PPO learns the local continuous controller: how to turn, move, avoid nearby
-  obstacles, cross a doorway, and reach the active target.
-- Starts, goals, robot yaw, and obstacle layouts are randomized at every
-  episode reset.
-- There is no fixed trajectory, scripted wheel command sequence, Nav2 local
-  planner, Stable-Baselines3, RLlib, or other external RL implementation.
+| Success | Collision | Timeout |
+|---:|---:|---:|
+| **32/50 · 64%** | **7/50 · 14%** | **11/50 · 22%** |
 
-The doorway selector was added because a memoryless policy receiving only the
-final goal bearing was repeatedly attracted to partition-wall corners. It
-provides topological guidance without deciding the robot's exact motion.
+The evaluated checkpoint contains **687,935 environment steps**, within a **700,000-step training budget**. It is a simulation prototype: hesitation in passages, collisions and timeouts remain.
 
-```mermaid
-flowchart TD
-    R["Doorway route selector"] --> T["Active target + motion: 5 values"]
-    L["LiDAR: 72 pooled ranges"] --> P["PPO actor-critic"]
-    T --> P
-    P --> A["Linear and angular velocity"]
-    A --> G["ROS 2 + Gazebo robot"]
-    G --> L
-```
+[Raw results and training plots](docs/results/stage3_687935/README.md) · [Checkpoint and checksum](models/README.md) · [Method](README_CURRICULUM.md)
 
-## Technical design
+## Run
 
-| Component | Implementation |
-|---|---|
-| Observation | 72 normalized LiDAR bins + target distance + target-bearing sine/cosine + linear/angular velocity = 77 values |
-| Action | Two tanh-bounded continuous values mapped to linear and angular velocity |
-| Policy | PyTorch actor-critic with separate LiDAR and goal/motion encoders |
-| RL algorithm | Clipped PPO with GAE, value clipping, entropy regularization, gradient clipping, and checkpoint resume |
-| Curriculum | Levels randomize 2, 4, and 6 movable objects |
-| Goal success | Final goal within 0.25 m |
-| Collision termination | Minimum LiDAR range at or below 0.22 m |
-| Global guidance | Doorway approach/exit subgoals for cross-room routes |
-| Layout safety | Grid connectivity check rejects unreachable randomized layouts |
-| Evaluation | Deterministic policies, fixed unseen seeds, per-episode CSV, summary JSON, and trajectories |
+Requires Ubuntu 24.04, ROS 2 Jazzy, Gazebo Harmonic, `ros_gz`, and a Python environment with PyTorch. The commands use CUDA and your existing `robotics_ai` environment; adjust its path if needed.
 
-The PPO actor-critic contains approximately 72.8k trainable parameters. The
-implementation includes the tanh-squashed Gaussian probability correction,
-Generalised Advantage Estimation, rollout storage, minibatch PPO optimisation,
-learning-rate annealing, curriculum state, and safe checkpoint resume.
+<details>
+<summary><strong>Setup, checks, fresh training, resume, evaluation and plotting</strong></summary>
 
-## Repository structure
-
-```text
-.
-├── src/
-│   ├── description_new/        # Robot model, Gazebo world, bridges and launch
-│   └── nav_learning/           # ROS environment, PPO, training and evaluation
-├── models/                     # Selected 263,443-step checkpoint
-├── docs/
-│   ├── media/                  # Early, middle and final-policy videos
-│   ├── images/                 # Two selected Gazebo screenshots
-│   ├── plots/                  # Four training/evaluation figures
-│   ├── results/                # Evaluation JSON and CSV evidence
-│   └── test_evidence/          # Unit and integration test logs
-├── README.md
-└── LICENSE
-```
-
-## Requirements
-
-- Ubuntu 24.04
-- ROS 2 Jazzy
-- Gazebo Harmonic and `ros_gz`
-- Python 3 with PyTorch, NumPy, PyYAML, Matplotlib, and pytest
-
-## Build
+### Setup
 
 ```bash
-cd /path/to/ros2-hybrid-ppo-navigation
-
+git clone https://github.com/Harivathsha/ros2-hybrid-ppo-navigation.git
+cd ros2-hybrid-ppo-navigation
+source ~/ai_envs/robotics_ai/bin/activate
 source /opt/ros/jazzy/setup.bash
-
-# Activate your Python environment if you use one.
-# source /path/to/venv/bin/activate
-
-python3 -m pip install -r src/nav_learning/requirements_rl.txt
-
-colcon build --symlink-install \
-  --packages-select description_new nav_learning
-
+python -m pip install -r src/nav_learning/requirements_rl.txt
+colcon build --symlink-install --packages-select description_new nav_learning
 source install/setup.bash
 ```
 
-## Tests
+Repeat the two environment `source` commands and `source install/setup.bash` in each new terminal, from the repository root.
 
-ROS-free PPO mathematics and checkpoint tests:
-
-```bash
-python3 -m nav_learning.ppo
-
-python3 -m pytest \
-  src/nav_learning/test/test_env_math.py \
-  src/nav_learning/test/test_ppo_math.py \
-  -q
-```
-
-With Gazebo running, validate the complete ROS environment:
+### Simulator — terminal 1
 
 ```bash
-python3 -m nav_learning.random_policy_smoke_test
-```
-
-## Run the simulator
-
-```bash
-cd /path/to/ros2-hybrid-ppo-navigation
-source /opt/ros/jazzy/setup.bash
-source install/setup.bash
-
 ros2 launch description_new launch_sim.launch.py
 ```
 
-## Evaluate the selected policy
+Keep this terminal open. Training/evaluation control physics pauses; do not run both controllers together.
 
-Run evaluation in a second terminal while the simulator remains open. Do not
-run the trainer and evaluator at the same time because both publish robot
-commands and reset the same Gazebo entities.
+### Checks — terminal 2
 
 ```bash
-python3 -m nav_learning.evaluate_ppo \
-  --checkpoint models/ppo_route_guided_263443_steps.pt \
-  --levels 2 \
-  --episodes-per-level 30 \
-  --seed-base 70000 \
-  --trajectory-episodes-per-level 10 \
-  --device cuda \
-  --output-dir evaluation_level2_30
+python -m pytest src/nav_learning/test -q
+python -m nav_learning.train_ppo --config src/nav_learning/config/ppo_training.yaml --timing-check
+python -m nav_learning.train_ppo --config src/nav_learning/config/ppo_training.yaml --smoke --run-dir "runs/smoke_$(date +%Y%m%d_%H%M%S)" --device cuda
 ```
 
-## Generate plots
+The live timing check should print `TIMING CHECK PASSED` and `TURN CHECK PASSED`. The smoke test runs 256 steps.
+
+### New model from scratch
 
 ```bash
-python3 -m nav_learning.plot_ppo_results \
-  --run-dir runs/ppo_navigation/run_20260829_route_fix_seed7 \
-  --evaluation-dir evaluation_level2_30 \
-  --output-dir plots_level2_30
+mkdir -p runs/ppo_curriculum
+export PPO_RUN="$PWD/runs/ppo_curriculum/fresh_$(date +%Y%m%d_%H%M%S)"
+printf '%s\n' "$PPO_RUN" > runs/ppo_curriculum/fresh_run_path.txt
+python -m nav_learning.train_ppo --config src/nav_learning/config/ppo_training.yaml \
+  --run-dir "$PPO_RUN" --total-timesteps 700000 --seed 42 --device cuda
 ```
 
-The plotting utility can create training curves, PPO optimisation diagnostics,
-evaluation outcome charts, and top-down trajectories.
+This creates new weights using the published current profile. The recorded experiment changed profiles during training, so this is not an exact replay of its learning history.
 
-## Train or resume
+### Stop and resume your run
+
+Press **Ctrl+C once**, wait for checkpoint saving and the shell prompt, and keep Gazebo open.
 
 ```bash
-python3 -m nav_learning.train_ppo \
-  --config src/nav_learning/config/ppo_training.yaml \
-  --resume models/ppo_route_guided_263443_steps.pt \
-  --run-dir runs/ppo_navigation/continued_training \
-  --total-timesteps 600000
+export PPO_RUN="$(cat runs/ppo_curriculum/fresh_run_path.txt)"
+python -m nav_learning.train_ppo --config "$PPO_RUN/config_used.yaml" \
+  --resume "$PPO_RUN/checkpoints/latest.pt" --run-dir "$PPO_RUN" \
+  --total-timesteps 700000 --device cuda
 ```
 
-## Demonstration
-| Early training: exploration and frequent failures |
+The target is cumulative. A run already at 700,000 needs a larger target to continue; omit `--seed` when resuming.
 
+### Continue the published model
 
-https://github.com/user-attachments/assets/eeb4a253-2dc6-4ee6-91d1-bf7f2406c03e
+```bash
+export PPO_RUN="$PWD/runs/ppo_curriculum/continued_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$PPO_RUN/checkpoints"
+cp models/ppo_square_arena_687935_steps.pt "$PPO_RUN/checkpoints/latest.pt"
+cp src/nav_learning/config/ppo_training.yaml "$PPO_RUN/config_used.yaml"
+printf '%s\n' "$PPO_RUN" > runs/ppo_curriculum/fresh_run_path.txt
+python -m nav_learning.train_ppo --config "$PPO_RUN/config_used.yaml" \
+  --resume "$PPO_RUN/checkpoints/latest.pt" --run-dir "$PPO_RUN" \
+  --total-timesteps 700000 --device cuda
+```
 
-| Middle training: partial obstacle avoidance |
+### Evaluate the published checkpoint
 
-[Screencast from 2026-08-30 15-39-03.webm](https://github.com/user-attachments/assets/647a3924-3d7f-45c1-8341-98082b1f7184)
+Stop the trainer first; keep Gazebo running.
 
-| Final policy: route-guided cross-room navigation |
+```bash
+export PPO_EVAL_DIR="$PWD/runs/eval_stage3_$(date +%Y%m%d_%H%M%S)"
+python -m nav_learning.evaluate_ppo --checkpoint models/ppo_square_arena_687935_steps.pt \
+  --levels 2 --episodes-per-level 50 --trajectory-episodes-per-level 50 \
+  --seed-base 120000 --output-dir "$PPO_EVAL_DIR" --device cuda
+```
 
-[Screencast from 2026-08-30 16-01-12.webm](https://github.com/user-attachments/assets/77a0a80a-439d-4118-b0a6-fdd64c90c874)
+Levels `0`, `1`, `2` mean Stages `1`, `2`, `3`. Use `--levels 0 1 2` to test all stages. For your own run, use `--checkpoint "$PPO_RUN/checkpoints/latest.pt"`. Actions are deterministic unless `--stochastic` is supplied.
 
-## Known limitations
+### Plot
 
-- The final evaluation succeeds in 25 of 30 hardest-level episodes; local
-  obstacle avoidance still fails in a minority of layouts.
-- Doorway locations come from known world topology rather than being inferred
-  from a learned map.
-- The policy is feed-forward and has no recurrent memory.
-- Results are simulation-only and have not been validated on real hardware.
-- Dynamic-obstacle behavior and sim-to-real robustness still need dedicated
-  evaluation.
+Recreate figures from the included evidence:
 
-## Planned work
+```bash
+python -m nav_learning.plot_ppo_results --run-dir docs/results/stage3_687935 \
+  --evaluation-dir docs/results/stage3_687935 --output-dir runs/plots_published
+```
 
-- Complete a larger held-out benchmark and confidence intervals.
-- Add behavior cloning demonstrations and compare PPO, BC, and PPO+BC.
-- Compare the continuous-control policy with SAC.
-- Investigate recurrent policies or learned topological representations.
-- Add domain randomization and deploy the controller on a physical robot.
+For your own training and evaluation:
 
-## Author
+```bash
+python -m nav_learning.plot_ppo_results --run-dir "$PPO_RUN" \
+  --evaluation-dir "$PPO_EVAL_DIR" --output-dir "$PPO_RUN/plots"
+```
 
-[Harivathsha](https://github.com/Harivathsha)
+</details>
 
-## License
+The actor receives 72 LiDAR bins plus five goal/motion features and outputs forward and angular velocity. Known obstacle geometry assists the **training reward**, but no planned route or doorway subgoal is supplied to the policy.
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0 · [Harivathsha](https://github.com/Harivathsha)
+

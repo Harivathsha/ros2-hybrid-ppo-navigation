@@ -5,19 +5,18 @@ import math
 import numpy as np
 import pytest
 
-from nav_learning.ros_nav_env import (
+from nav_learning.nav_math import (
     COLLISION_DISTANCE_M,
     GOAL_DISTANCE_CAP_M,
     LIDAR_BINS,
     MAX_ANGULAR_SPEED_RADPS,
     MAX_LINEAR_SPEED_MPS,
     OBSERVATION_SIZE,
+    RewardSettings,
     InvalidScanError,
     build_observation,
-    build_route_waypoints,
     calculate_reward,
     determine_episode_outcome,
-    navigation_path_exists,
     policy_action_to_velocity,
     preprocess_scan,
     quaternion_from_yaw,
@@ -26,6 +25,116 @@ from nav_learning.ros_nav_env import (
     wrap_to_pi,
     yaw_from_quaternion,
 )
+
+
+def test_stationary_turns_have_an_accessible_speed_action_range():
+    from nav_learning.nav_math import ActionSettings
+    settings = ActionSettings(stop_fraction=0.15)
+    for speed_action in (-0.99, -0.90, -0.75, -0.70):
+        for turn in (-0.5, 0.5):
+            linear, angular = policy_action_to_velocity([speed_action, turn], settings)
+            assert linear == 0
+            assert angular == pytest.approx(turn * MAX_ANGULAR_SPEED_RADPS)
+    assert policy_action_to_velocity([1, 0], settings)[0] == pytest.approx(MAX_LINEAR_SPEED_MPS)
+    assert policy_action_to_velocity([0, 0], settings)[0] > 0
+
+
+def test_new_speed_mapping_is_continuous_and_round_trips_velocities():
+    from nav_learning.nav_math import ActionSettings
+    settings = ActionSettings(stop_fraction=0.15)
+    speeds = [policy_action_to_velocity([a, 0], settings)[0] for a in np.linspace(-1, 1, 100)]
+    assert np.all(np.diff(speeds) >= 0)
+    assert policy_action_to_velocity([-0.7 + 1e-6, 0], settings)[0] < 1e-6
+    for velocity in (0, 0.01, 0.10, MAX_LINEAR_SPEED_MPS):
+        action = velocity_to_policy_action(velocity, -0.4, settings)
+        np.testing.assert_allclose(policy_action_to_velocity(action, settings), [velocity, -0.4], atol=1e-7)
+
+
+def test_detour_progress_rewards_sideways_escape_from_a_blocked_goal():
+    from nav_learning.nav_math import DetourDistance, BOX_NAMES
+    goal = (1.5, 0)
+    field = DetourDistance({BOX_NAMES[0]: (0, 0, 0.4, 0)}, goal)
+    previous, current = (-1.5, 0), (-1.5, 0.1)
+    assert math.dist(current, goal) > math.dist(previous, goal)
+    assert field.distance(current) < field.distance(previous)
+    settings = RewardSettings(progress_mode="detour_potential")
+    _, components = calculate_reward(math.dist(previous, goal), math.dist(current, goal),
+        0, 1, 0.1, "running", reward_settings=settings,
+        previous_detour_distance_m=field.distance(previous),
+        current_detour_distance_m=field.distance(current))
+    assert components["progress_reward"] > 0
+
+
+def test_potential_shaping_telescopes_and_keeps_timeout_bootstrapping():
+    settings = RewardSettings(progress_mode="detour_potential", discount_factor=0.99)
+    distances = [4.0, 4.2, 3.0, 0.1]
+    shaped = []
+    for index in range(3):
+        outcome = "success" if index == 2 else "running"
+        _, parts = calculate_reward(2, 2, 0, 1, 0, outcome, reward_settings=settings,
+            previous_detour_distance_m=distances[index], current_detour_distance_m=distances[index + 1])
+        shaped.append(parts["progress_reward"])
+    assert sum(settings.discount_factor ** i * r for i, r in enumerate(shaped)) == pytest.approx(4.0)
+    _, timeout = calculate_reward(2, 2, 0, 1, 0, "timeout", reward_settings=settings,
+        previous_detour_distance_m=4, current_detour_distance_m=3)
+    assert timeout["progress_reward"] == pytest.approx(4 - 0.99 * 3)
+    _, collision = calculate_reward(2, 2, 0, 0.21, 0, "collision", reward_settings=settings,
+        previous_detour_distance_m=1000, current_detour_distance_m=1000)
+    assert collision["total_reward"] < 0  # The bounded shaping cannot pay for crashing.
+
+
+def test_route_distance_matches_single_box_geometry_and_reflection():
+    from nav_learning.nav_math import DetourDistance, BOX_NAMES
+    layout = {BOX_NAMES[0]: (0, 0, 0.4, 0)}
+    field = DetourDistance(layout, (1.5, 0))
+    offset = 0.801
+    expected = 2 * math.hypot(1.5 - offset, offset) + 2 * offset
+    assert field.distance((-1.5, 0)) == pytest.approx(expected)
+    assert field.distance((-1.5, 0.4)) == pytest.approx(field.distance((-1.5, -0.4)))
+    assert field.distance((1.5, 0)) == 0
+    assert DetourDistance({}, (1, 1)).distance((0, 0)) == pytest.approx(math.sqrt(2))
+    for point in ((-0.75, 0), (0, 0), (4.4, 0)):
+        assert 0 <= field.distance(point) <= 20
+    # Outside the circular collision margin, even a diagonal corner approach
+    # must have a finite escape potential rather than jumping to the fallback.
+    assert field.distance((-0.70, 0.70)) < 20
+
+
+@pytest.mark.parametrize("section, values", [
+    ("action", {"stop_fraction": -0.1}), ("action", {"stop_fraction": True}),
+    ("action", {"stop_fraction": float("nan")}), ("reward", {"progress_mode": "typo"}),
+    ("reward", {"discount_factor": 1.0}), ("reward", {"detour_clearance_m": 0.4})])
+def test_invalid_new_settings_fail_early(section, values):
+    from nav_learning.nav_math import ActionSettings
+    with pytest.raises(ValueError):
+        (ActionSettings if section == "action" else RewardSettings).from_mapping(values)
+
+
+def test_tuned_obstacle_penalty_starts_earlier_and_discourages_close_approaches():
+    """At 0.30 m the warning must outweigh a maximum-speed progress reward."""
+
+    tuned = RewardSettings.from_mapping({"safety_distance_m": 0.50,
+                                         "near_obstacle_penalty_scale": 0.20})
+    def reward(clearance, settings=RewardSettings(), outcome="running"):
+        return calculate_reward(2, 2 - MAX_LINEAR_SPEED_MPS * 0.1, 0, clearance,
+                                MAX_LINEAR_SPEED_MPS, outcome, reward_settings=settings)
+    old, old_parts = reward(0.45)
+    new, new_parts = reward(0.45, tuned)
+    assert old_parts["obstacle_penalty"] == 0
+    assert new_parts["obstacle_penalty"] < 0
+    assert new < old
+    assert reward(0.30, tuned)[0] < 0
+    assert reward(1.0, tuned) == reward(1.0)
+    assert reward(0.21, tuned, "collision")[1]["terminal_reward"] == -25
+    assert reward(1.0, tuned, "success")[1]["terminal_reward"] == 25
+
+
+@pytest.mark.parametrize("values", [{"safety_distance_m": 0.22},
+    {"safety_distance_m": float("nan")}, {"near_obstacle_penalty_scale": -0.1},
+    {"saftey_distance_m": 0.5}])
+def test_invalid_reward_settings_rejected(values):
+    with pytest.raises(ValueError):
+        RewardSettings.from_mapping(values)
 
 
 def test_collision_threshold_is_no_longer_overly_conservative():
@@ -43,67 +152,6 @@ def test_collision_threshold_is_no_longer_overly_conservative():
     )
     assert collision == (True, False, "collision")
     assert running == (False, False, "running")
-
-
-def test_route_waypoints_cross_each_required_doorway():
-    assert build_route_waypoints("office", "office") == ()
-    np.testing.assert_allclose(
-        build_route_waypoints("office", "laboratory"),
-        (
-            (-2.65, 0.0),
-            (-1.95, 0.0),
-            (1.95, 0.0),
-            (2.65, 0.0),
-        ),
-    )
-    np.testing.assert_allclose(
-        build_route_waypoints("laboratory", "office"),
-        (
-            (2.65, 0.0),
-            (1.95, 0.0),
-            (-1.95, 0.0),
-            (-2.65, 0.0),
-        ),
-    )
-
-
-def test_navigation_connectivity_detects_a_blocked_doorway():
-    assert navigation_path_exists(
-        start_xy=(-4.0, 0.0),
-        goal_xy=(0.0, 0.0),
-        layout={},
-    )
-    assert not navigation_path_exists(
-        start_xy=(-4.0, 0.0),
-        goal_xy=(0.0, 0.0),
-        layout={
-            "office_coffee_table": (-2.30, 0.0, 0.0, 0.0),
-        },
-    )
-
-
-def test_waypoint_and_stuck_reward_components_sum():
-    reward, components = calculate_reward(
-        previous_goal_distance_m=1.0,
-        current_goal_distance_m=1.0,
-        relative_goal_bearing_rad=0.0,
-        nearest_obstacle_m=1.0,
-        commanded_linear_velocity_mps=0.0,
-        outcome="running",
-        waypoints_reached=1,
-        stuck=True,
-    )
-    assert components["waypoint_reward"] == pytest.approx(2.0)
-    assert components["stuck_penalty"] == pytest.approx(-0.20)
-    assert reward == pytest.approx(
-        components["progress_reward"]
-        + components["heading_reward"]
-        + components["step_penalty"]
-        + components["obstacle_penalty"]
-        + components["waypoint_reward"]
-        + components["stuck_penalty"]
-        + components["terminal_reward"]
-    )
 
 
 def test_wrap_to_pi_keeps_equivalent_angle():

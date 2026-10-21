@@ -1,7 +1,9 @@
-# Selected screenshots
+# Environment views
 
-Add exactly two representative screenshots here:
+These two images are overhead reconstructions of the recorded box poses, starts, goals and trajectories for seeds 140000 (success) and 140002 (timeout). They are not Gazebo screenshots.
 
-- `world_overview.png` — the complete three-room Gazebo environment.
-- `final_policy.png` — the robot, randomized obstacles and green goal during
-  final deterministic evaluation.
+Regenerate them from the repository root:
+
+```bash
+python tools/render_environment_views.py
+```

@@ -1,0 +1,59 @@
+{
+  "action_settings": {
+    "stop_fraction": 0.15
+  },
+  "blocked_direct_path_episodes": 49,
+  "blocked_direct_path_success_rate": 0.6326530612244898,
+  "checkpoint": "/home/harivathsha/ai_envs/project/ros2-hybrid-ppo-navigation-main/runs/ppo_curriculum/fresh_700k_seed42_20261019_183509_gate80_20261020_132016_braking_20261020_145409/checkpoints/latest.pt",
+  "checkpoint_training_state": {
+    "total_timesteps": 687935,
+    "update_index": 334
+  },
+  "control_mode": "gazebo_run_to_sim_time_v1",
+  "controller": "PPO final-goal policy",
+  "created_at_utc": "2026-10-21T08:46:34.105302+00:00",
+  "deterministic": true,
+  "environment_id": "square_arena_random_3_6_9m_curriculum_circle_goal_v3",
+  "episodes_per_level": 50,
+  "levels": [
+    2
+  ],
+  "overall": {
+    "collision_rate": 0.14,
+    "episodes": 50,
+    "mean_final_distance_m": 1.6977486101579535,
+    "mean_length": 860.76,
+    "mean_minimum_clearance_m": 0.34738718539476393,
+    "mean_return": 25.958083767215406,
+    "mean_stuck_step_fraction": 0.1900273933870238,
+    "mean_success_path_efficiency": 0.835468542595102,
+    "success_rate": 0.64,
+    "timeout_rate": 0.22
+  },
+  "per_level": {
+    "2": {
+      "collision_rate": 0.14,
+      "episodes": 50,
+      "mean_final_distance_m": 1.6977486101579535,
+      "mean_length": 860.76,
+      "mean_minimum_clearance_m": 0.34738718539476393,
+      "mean_return": 25.958083767215406,
+      "mean_stuck_step_fraction": 0.1900273933870238,
+      "mean_success_path_efficiency": 0.835468542595102,
+      "success_rate": 0.64,
+      "timeout_rate": 0.22
+    }
+  },
+  "practice_phase": null,
+  "reward_settings": {
+    "braking_penalty_scale": 1.0,
+    "detour_clearance_m": 0.3,
+    "discount_factor": 0.99,
+    "near_obstacle_penalty_scale": 0.2,
+    "progress_mode": "detour_potential",
+    "safety_distance_m": 0.5
+  },
+  "seed_base": 120000,
+  "task_distribution": "standard_benchmark",
+  "task_suite": "standard"
+}

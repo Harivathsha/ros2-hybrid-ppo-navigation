@@ -355,7 +355,7 @@ class ActorCritic(nn.Module):
         observation: torch.Tensor,
         action: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Reevaluate stored actions and return entropy and values."""
+        """Reevaluate stored actions and estimate current bounded-action entropy."""
 
         distribution, state_value = self._distribution_and_value(
             observation
@@ -370,14 +370,14 @@ class ActorCritic(nn.Module):
             distribution,
             pre_tanh_action,
         )
-        # The transformed distribution has no simple analytic entropy.
-        # Gaussian entropy is a stable exploration proxy used by the loss.
-        gaussian_entropy = distribution.entropy().sum(dim=-1)
-        _require_finite_float32_tensor(
-            gaussian_entropy,
-            "gaussian_entropy",
+        # Sample from the CURRENT policy, not the stored rollout actions.
+        # rsample keeps the entropy gradient through both mu and sigma.
+        # The tanh Jacobian prevents wider Gaussians from being rewarded
+        # merely for producing more actions saturated near -1 and +1.
+        action_entropy = -self._squashed_log_probability(
+            distribution, distribution.rsample()
         )
-        return log_probability, gaussian_entropy, state_value
+        return log_probability, action_entropy, state_value
 
     def evaluate_action(
         self,
@@ -846,6 +846,23 @@ class PPOAgent:
         for parameter_group in self.optimizer.param_groups:
             parameter_group["lr"] = learning_rate
 
+    def set_hyperparameters(self, settings: PPOHyperparameters) -> None:
+        """Apply YAML settings after restoring Adam's moment estimates."""
+
+        self.hyperparameters = settings.validated()
+        for group in self.optimizer.param_groups:
+            group["lr"] = settings.learning_rate
+            group["eps"] = settings.adam_epsilon
+
+    @torch.no_grad()
+    def reset_exploration(self) -> None:
+        """Reset only sampling noise, preserving the learned mean and critic."""
+
+        parameter = self.model.actor_log_standard_deviation
+        parameter.fill_(INITIAL_LOG_STANDARD_DEVIATION)
+        # Old Adam momentum would otherwise push this reset parameter back.
+        self.optimizer.state.pop(parameter, None)
+
     def update(self, rollout: RolloutBuffer) -> dict[str, float]:
         """Optimise one complete on-policy rollout."""
 
@@ -861,6 +878,7 @@ class PPOAgent:
             "policy_loss": 0.0,
             "value_loss": 0.0,
             "entropy": 0.0,
+            "squashed_entropy": 0.0,
             "total_loss": 0.0,
             "approximate_kl": 0.0,
             "clip_fraction": 0.0,
@@ -878,7 +896,7 @@ class PPOAgent:
             for batch in rollout.minibatches(minibatch_size):
                 (
                     new_log_probabilities,
-                    gaussian_entropy,
+                    action_entropy,
                     new_values,
                 ) = self.model.evaluate_action_with_entropy(
                     batch.observations,
@@ -900,7 +918,14 @@ class PPOAgent:
                     batch.returns,
                     settings.value_clip_coefficient,
                 )
-                entropy = gaussian_entropy.mean()
+                entropy = action_entropy.mean()
+                # Keep the old diagnostic column comparable across versions.
+                gaussian_entropy = (
+                    ACTION_SIZE * 0.5 * math.log(2.0 * math.pi * math.e)
+                    + self.model.actor_log_standard_deviation.clamp(
+                        MIN_LOG_STANDARD_DEVIATION, MAX_LOG_STANDARD_DEVIATION
+                    ).sum()
+                )
                 total_loss = (
                     policy_loss
                     + settings.value_loss_coefficient * value_loss
@@ -923,7 +948,8 @@ class PPOAgent:
                 values = {
                     "policy_loss": policy_loss,
                     "value_loss": value_loss,
-                    "entropy": entropy,
+                    "entropy": gaussian_entropy,
+                    "squashed_entropy": entropy,
                     "total_loss": total_loss,
                     "approximate_kl": approximate_kl,
                     "clip_fraction": clip_fraction,

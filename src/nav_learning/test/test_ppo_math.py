@@ -261,3 +261,235 @@ def test_cpu_device_selection_is_explicit():
     """CPU mode must work even on a machine with no visible GPU."""
 
     assert choose_device("cpu") == torch.device("cpu")
+
+
+@pytest.mark.parametrize(("log_std", "gradient_sign"), [(-2.0, 1), (0.8, -1)])
+def test_entropy_gradient_respects_bounded_actions(log_std, gradient_sign):
+    """Entropy must discourage excessive saturation, unlike Gaussian entropy."""
+
+    torch.manual_seed(91)
+    model = ActorCritic()
+    with torch.no_grad():
+        model.actor_mean.weight.zero_()
+        model.actor_mean.bias.zero_()
+        model.actor_log_standard_deviation.fill_(log_std)
+    observations = make_observations(1024)
+    actions = torch.zeros((1024, ACTION_SIZE), dtype=torch.float32)
+    _, entropy, _ = model.evaluate_action_with_entropy(observations, actions)
+    entropy.mean().backward()
+    gradient = model.actor_log_standard_deviation.grad
+    assert torch.isfinite(entropy).all()
+    assert torch.all(gradient * gradient_sign > 0.3)
+    if log_std > 0:
+        assert float(entropy.mean()) < 0.0
+
+
+def test_tuned_resume_applies_yaml_and_preserves_learned_policy(tmp_path):
+    """Old Adam settings must not silently override the new tuning profile."""
+
+    from dataclasses import replace
+    from pathlib import Path
+    from nav_learning.nav_math import ENVIRONMENT_ID
+    from nav_learning.train_ppo import load_training_settings, _resume_training_agent
+
+    settings = load_training_settings(Path(__file__).parents[1] / "config/ppo_training.yaml")
+    settings = replace(settings, ppo=replace(settings.ppo, adam_epsilon=3e-6))
+    agent = PPOAgent(ActorCritic(), PPOHyperparameters(update_epochs=1, minibatch_size=4))
+    agent.update(make_rollout(agent.model))
+    with torch.no_grad():
+        agent.model.actor_log_standard_deviation.fill_(0.4)
+    before = {name: p.detach().clone() for name, p in agent.model.named_parameters()}
+    old_mean_actions = agent.model.deterministic_action(make_observations())
+    original_state = {
+        "total_timesteps": 254218, "update_index": 123, "episode_index": 1851,
+        "next_reset_seed": 11852, "curriculum_level": 1,
+        "recent_successes": [1] * 53 + [0] * 47,
+        "recent_episode_returns": [30, -20], "promotion_wait_remaining": 10,
+    }
+    source = save_checkpoint(tmp_path / "legacy.pt", agent, original_state,
+                             metadata={"environment_id": ENVIRONMENT_ID})
+    restored, state = _resume_training_agent(settings, source, torch.device("cpu"), True)
+    assert restored.hyperparameters == settings.ppo
+    assert restored.optimizer.param_groups[0]["lr"] == pytest.approx(1e-4)
+    assert restored.optimizer.param_groups[0]["eps"] == pytest.approx(3e-6)
+    assert torch.equal(old_mean_actions, restored.model.deterministic_action(make_observations()))
+    for name, parameter in restored.model.named_parameters():
+        if name == "actor_log_standard_deviation":
+            assert torch.all(parameter == -0.5)
+            assert parameter not in restored.optimizer.state
+        else:
+            assert torch.equal(parameter, before[name])
+            old_parameter = dict(agent.model.named_parameters())[name]
+            for key, old_value in agent.optimizer.state[old_parameter].items():
+                assert torch.equal(old_value, restored.optimizer.state[parameter][key])
+    for key in ("total_timesteps", "update_index", "episode_index", "next_reset_seed", "curriculum_level"):
+        assert state[key] == original_state[key]
+    assert state["recent_successes"] == []
+    assert state["promotion_wait_remaining"] == 0
+    metrics = restored.update(make_rollout(restored.model))
+    assert math.isfinite(metrics["squashed_entropy"])
+
+
+def test_same_tuned_checkpoint_resumes_without_resetting_progress(tmp_path):
+    """A normal subsequent resume keeps its new promotion window and noise."""
+
+    from dataclasses import asdict
+    from pathlib import Path
+    from nav_learning.nav_math import ENVIRONMENT_ID
+    from nav_learning.train_ppo import TRAINING_REVISION, load_training_settings, _resume_training_agent
+
+    settings = load_training_settings(Path(__file__).parents[1] / "config/ppo_training.yaml")
+    agent = PPOAgent(ActorCritic(), settings.ppo)
+    state = dict(total_timesteps=260000, update_index=126, episode_index=1890,
+                 next_reset_seed=11891, curriculum_level=1, recent_successes=[1, 0, 1],detour_phase=2)
+    path = save_checkpoint(tmp_path / "tuned.pt", agent, state, metadata={
+        "environment_id": ENVIRONMENT_ID, "training_revision": TRAINING_REVISION,
+        "reward_settings": asdict(settings.reward),
+        "action_settings": asdict(settings.action),
+        "curriculum_settings": asdict(settings.curriculum),
+        "detour_practice": settings.curriculum.detour_practice,
+    })
+    restored, new_state = _resume_training_agent(settings, path, torch.device("cpu"))
+    assert new_state["recent_successes"] == [1, 0, 1]
+    assert new_state["detour_phase"] == 2
+    assert torch.equal(restored.model.actor_log_standard_deviation,
+                       agent.model.actor_log_standard_deviation)
+
+
+def test_old_yaml_defaults_to_legacy_reward_settings(tmp_path):
+    """Existing run configs without a reward section remain readable."""
+
+    from pathlib import Path
+    import yaml
+    from nav_learning.nav_math import RewardSettings
+    from nav_learning.train_ppo import load_training_settings
+
+    values = yaml.safe_load((Path(__file__).parents[1] / "config/ppo_training.yaml").read_text())
+    values.pop("reward")
+    path = tmp_path / "old.yaml"
+    path.write_text(yaml.safe_dump(values))
+    assert load_training_settings(path).reward == RewardSettings()
+
+
+@pytest.mark.parametrize("wrong_steering_sign", [False, True])
+def test_live_preflight_checks_stationary_turn_signs(monkeypatch, wrong_steering_sign):
+    """Exercise the live-check gate offline; real Gazebo still needs this check."""
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace, ModuleType
+    from nav_learning import train_ppo
+    from nav_learning.nav_math import policy_action_to_velocity
+
+    settings = train_ppo.load_training_settings(Path(__file__).parents[1] / 'config/ppo_training.yaml')
+    class Environment:
+        closed = False
+        def __init__(self, **kwargs):
+            self.action_settings = kwargs['action_settings']
+            self.simulation_time_ns = 0
+            self.x = self.yaw = 0.0
+        def reset(self, **kwargs):
+            return None, {}
+        def step(self, action):
+            v, w = policy_action_to_velocity(action, self.action_settings)
+            self.simulation_time_ns += 100_000_000
+            self.x += v * .1
+            self.yaw += w * .1 * (-1 if wrong_steering_sign else 1)
+            return None, 0, False, False, dict(simulation_interval_sec=.1,
+                maximum_sensor_age_sec=.01, robot_x=self.x, robot_y=0, robot_yaw=self.yaw)
+        def assert_simulation_time_unchanged(self, expected):
+            assert expected == self.simulation_time_ns
+        def publish_stop(self): pass
+        def pause_simulation(self): pass
+        def close(self): Environment.closed = True
+    ros = ModuleType('rclpy')
+    ros.init = lambda **kwargs: None
+    ros.ok = lambda: True
+    ros.shutdown = lambda: None
+    env_module = ModuleType('nav_learning.ros_nav_env')
+    env_module.RosNavEnv = Environment
+    monkeypatch.setitem(sys.modules, 'rclpy', ros)
+    monkeypatch.setitem(sys.modules, 'nav_learning.ros_nav_env', env_module)
+    monkeypatch.setattr(train_ppo.time, 'sleep', lambda seconds: None)
+    if wrong_steering_sign:
+        with pytest.raises(RuntimeError, match='left turn failed'):
+            train_ppo._run_timing_check(settings)
+    else:
+        train_ppo._run_timing_check(settings)
+    assert Environment.closed
+
+
+def test_potential_discount_must_match_ppo(tmp_path):
+    from pathlib import Path
+    import yaml
+    from nav_learning.train_ppo import load_training_settings
+    values = yaml.safe_load((Path(__file__).parents[1] / 'config/ppo_training.yaml').read_text())
+    values['reward']['discount_factor'] = 0.95
+    path = tmp_path / 'bad_discount.yaml'
+    path.write_text(yaml.safe_dump(values))
+    with pytest.raises(ValueError, match='same discount_factor'):
+        load_training_settings(path)
+
+
+@pytest.mark.parametrize("mode", ["tuned_resume", "normal_resume", "smoke", "defaults"])
+def test_trainer_cli_preserves_nested_reward_settings(tmp_path, monkeypatch, mode):
+    """Exercise main(), including YAML -> overrides -> config snapshot -> trainer."""
+
+    from pathlib import Path
+    from nav_learning import train_ppo
+    from nav_learning.nav_math import RewardSettings
+
+    config = Path(__file__).parents[1] / "config/ppo_training.yaml"
+    run = tmp_path / "run"
+    arguments = ["--config", str(config), "--run-dir", str(run)]
+    source = tmp_path / "source.pt"
+    source.touch()
+    if mode in ("tuned_resume", "normal_resume"):
+        arguments += ["--resume", str(source), "--total-timesteps", "300000", "--device", "cuda"]
+    if mode == "tuned_resume":
+        arguments += ["--reset-exploration"]
+    if mode == "smoke":
+        arguments += ["--smoke", "--device", "cpu"]
+    calls = []
+    monkeypatch.setattr(train_ppo, "run_training", lambda **kwargs: calls.append(kwargs))
+    train_ppo.main(arguments)
+    assert len(calls) == 1
+    actual = calls[0]
+    settings = actual["settings"]
+    assert settings.reward == RewardSettings(0.5, 0.2, progress_mode="detour_potential")
+    assert settings.action.stop_fraction == 0.15
+    assert settings.ppo.learning_rate == pytest.approx(0.0001)
+    assert settings.ppo.entropy_coefficient == pytest.approx(0.001)
+    assert actual["reset_exploration"] is (mode == "tuned_resume")
+    assert actual["fixed_level"] == (0 if mode == "smoke" else None)
+    assert train_ppo.load_training_settings(run / "config_used.yaml") == settings
+    if mode in ("tuned_resume", "normal_resume"):
+        assert actual["resume_path"] == source
+        assert settings.total_timesteps == 300000
+        assert settings.device == "cuda"
+    if mode == "smoke":
+        assert settings.total_timesteps == 256
+        assert settings.rollout_steps == 128
+
+
+def test_cli_overrides_still_reject_invalid_totals():
+    """Recursive serialization must retain full validation after overrides."""
+
+    from pathlib import Path
+    from nav_learning.train_ppo import _apply_overrides, _parse_arguments, load_training_settings
+
+    settings = load_training_settings(Path(__file__).parents[1] / "config/ppo_training.yaml")
+    with pytest.raises(ValueError, match="total_timesteps must be positive"):
+        _apply_overrides(settings, _parse_arguments(["--total-timesteps", "-1"]))
+
+
+def test_timing_check_cli_bypasses_training_and_run_creation(tmp_path, monkeypatch):
+    from pathlib import Path
+    from nav_learning import train_ppo
+    config=Path(__file__).parents[1]/'config/ppo_training.yaml'
+    checks=[]
+    monkeypatch.setattr(train_ppo,'_run_timing_check',lambda settings:checks.append(settings))
+    monkeypatch.setattr(train_ppo,'run_training',lambda **kwargs:pytest.fail('Training should not start'))
+    run=tmp_path/'unused'
+    train_ppo.main(['--config',str(config),'--timing-check','--run-dir',str(run),'--device','cuda'])
+    assert len(checks)==1 and checks[0].curriculum.detour_practice
+    assert not run.exists()

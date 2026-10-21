@@ -1,0 +1,62 @@
+{
+  "file": "models/ppo_square_arena_687935_steps.pt",
+  "sha256": "f0b8f3992ae3c683fc1290bb0675d4b9171d66f091e5946049e0e12fcc667d71",
+  "model_parameters_sha256": "8e85f03a11a60267158e5789eac941f03a31ca8ee723f8c7d8117c38ff43f4f6",
+  "training_state": {
+    "total_timesteps": 687935,
+    "update_index": 334,
+    "episode_index": 2451,
+    "curriculum_level": 2,
+    "detour_phase": 3,
+    "next_reset_seed": 12459
+  },
+  "metadata": {
+    "environment_id": "square_arena_random_3_6_9m_curriculum_circle_goal_v3",
+    "run_directory": "/home/harivathsha/ai_envs/project/ros2-hybrid-ppo-navigation-main/runs/ppo_curriculum/fresh_700k_seed42_20261019_183509_gate80_20261020_132016_braking_20261020_145409",
+    "config_path": "/home/harivathsha/ai_envs/project/ros2-hybrid-ppo-navigation-main/runs/ppo_curriculum/fresh_700k_seed42_20261019_183509_gate80_20261020_132016_braking_20261020_145409/config_used.yaml",
+    "saved_at_utc": "2026-10-21T07:23:53.797910+00:00",
+    "training_revision": "corner_detour_rewards_v1",
+    "action_settings": {
+      "stop_fraction": 0.15
+    },
+    "reward_settings": {
+      "safety_distance_m": 0.5,
+      "near_obstacle_penalty_scale": 0.2,
+      "progress_mode": "detour_potential",
+      "discount_factor": 0.99,
+      "detour_clearance_m": 0.3,
+      "braking_penalty_scale": 1.0
+    },
+    "control_mode": "gazebo_run_to_sim_time_v1",
+    "detour_practice": true,
+    "curriculum_settings": {
+      "enabled": true,
+      "start_level": 0,
+      "max_level": 2,
+      "promotion_window": 100,
+      "minimum_episodes": 100,
+      "success_threshold": 0.8,
+      "validation_episodes": 10,
+      "validation_success_threshold": 0.8,
+      "validation_retry_episodes": 25,
+      "detour_practice": true,
+      "detour_success_threshold": 0.8,
+      "corner_practice_probability": 0.3,
+      "mirror_training": true
+    }
+  },
+  "hyperparameters": {
+    "learning_rate": 0.0001,
+    "discount_factor": 0.99,
+    "gae_lambda": 0.95,
+    "clip_coefficient": 0.2,
+    "value_clip_coefficient": 0.2,
+    "entropy_coefficient": 0.001,
+    "value_loss_coefficient": 0.5,
+    "max_gradient_norm": 0.5,
+    "update_epochs": 10,
+    "minibatch_size": 64,
+    "target_kl": 0.03,
+    "adam_epsilon": 1e-05
+  }
+}

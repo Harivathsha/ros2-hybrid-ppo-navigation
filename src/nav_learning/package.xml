@@ -12,6 +12,7 @@
   <depend>nav_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>ros_gz_interfaces</depend>
+  <depend>rosgraph_msgs</depend>
 
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
